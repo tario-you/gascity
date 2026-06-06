@@ -84,51 +84,6 @@ func TestRunDashboardServeAllowsNoCityWithAPIOverride(t *testing.T) {
 	}
 }
 
-func TestRunDashboardServeCanProxySupervisorAPI(t *testing.T) {
-	configureIsolatedRuntimeEnv(t)
-	t.Chdir(t.TempDir())
-
-	oldAlive := supervisorAliveHook
-	oldServe := dashboardServeHook
-	oldProxyServe := dashboardServeProxiedHook
-	oldCityFlag := cityFlag
-	oldRigFlag := rigFlag
-	t.Cleanup(func() {
-		supervisorAliveHook = oldAlive
-		dashboardServeHook = oldServe
-		dashboardServeProxiedHook = oldProxyServe
-		cityFlag = oldCityFlag
-		rigFlag = oldRigFlag
-	})
-
-	supervisorAliveHook = func() int { return 0 }
-	cityFlag = ""
-	rigFlag = ""
-
-	dashboardServeHook = func(_ int, _ string) error {
-		t.Fatal("direct dashboard serve hook should not be called when proxy mode is enabled")
-		return nil
-	}
-	var gotURL string
-	dashboardServeProxiedHook = func(_ int, apiURL string) error {
-		gotURL = apiURL
-		return nil
-	}
-
-	if err := runDashboardServeWithOptions(
-		"gc dashboard",
-		9090,
-		"http://127.0.0.1:9999/",
-		io.Discard,
-		dashboardServeOptions{proxyAPI: true},
-	); err != nil {
-		t.Fatalf("runDashboardServeWithOptions() error: %v", err)
-	}
-	if gotURL != "http://127.0.0.1:9999" {
-		t.Fatalf("proxied dashboard api URL = %q, want trimmed override", gotURL)
-	}
-}
-
 // TestRunDashboardServeUsesStandaloneControllerAPI pins the post-fixup
 // behavior: the standalone controller's API now serves supervisor-shaped
 // /v0/city/{cityName}/... routes via api.NewSupervisorMux, so `gc

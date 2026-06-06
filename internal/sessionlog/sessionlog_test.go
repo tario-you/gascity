@@ -1383,6 +1383,28 @@ func TestReadCodexFileDiagnostics(t *testing.T) {
 	}
 }
 
+func TestReadCodexFileKeepsLegacyAssistantWhenOnlyUserResponseItemExists(t *testing.T) {
+	path := writeJSONL(t,
+		`{"timestamp":"2026-01-02T00:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"hello"}]}}`,
+		`{"timestamp":"2026-01-02T00:00:01Z","type":"event_msg","payload":{"type":"agent_message","message":"legacy assistant reply"}}`,
+	)
+
+	sess, err := ReadCodexFile(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(sess.Messages); got != 2 {
+		t.Fatalf("Messages = %d, want user response_item plus legacy assistant event", got)
+	}
+	if sess.Messages[1].Type != "assistant" {
+		t.Fatalf("Messages[1].Type = %q, want assistant", sess.Messages[1].Type)
+	}
+	blocks := sess.Messages[1].ContentBlocks()
+	if len(blocks) != 1 || blocks[0].Text != "legacy assistant reply" {
+		t.Fatalf("assistant blocks = %#v, want legacy assistant reply", blocks)
+	}
+}
+
 func TestReadCodexFileMalformedTailDiagnostics(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "rollout.jsonl")

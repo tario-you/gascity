@@ -1102,7 +1102,6 @@ gc dashboard [flags]
 |------|------|---------|-------------|
 | `--api` | string |  | GC API server URL override (auto-discovered by default) |
 | `--port` | int | `8080` | HTTP port |
-| `--proxy-api` | bool |  | proxy supervisor API through the dashboard origin |
 
 | Subcommand | Description |
 |------------|-------------|
@@ -1124,7 +1123,6 @@ gc dashboard serve [flags]
 |------|------|---------|-------------|
 | `--api` | string |  | GC API server URL override (auto-discovered by default) |
 | `--port` | int | `8080` | HTTP port |
-| `--proxy-api` | bool |  | proxy supervisor API through the dashboard origin |
 
 ## gc doctor
 

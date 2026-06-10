@@ -685,10 +685,15 @@ func upgradeCodexHookValue(v any) bool {
 
 var codexManagedHookCommandNeedles = []string{
 	`gc prime --hook`,
+	`"${GC_BIN:-gc}" prime --hook`,
 	`gc nudge drain --inject`,
+	`"${GC_BIN:-gc}" nudge drain --inject`,
 	`gc mail check --inject`,
+	`"${GC_BIN:-gc}" mail check --inject`,
 	`gc hook --inject`,
+	`"${GC_BIN:-gc}" hook --inject`,
 	`gc handoff --auto`,
+	`"${GC_BIN:-gc}" handoff --auto`,
 }
 
 func isCodexManagedHookCommand(command string) bool {
@@ -706,6 +711,8 @@ func upgradeCodexHookCommand(command string) (string, bool) {
 		equalsLegacyCommandBody(body, `gc prime --hook --hook-format codex`) ||
 		equalsLegacyCommandBody(body, `GC_HOOK_EVENT_NAME=SessionStart gc prime --hook`) ||
 		equalsLegacyCommandBody(body, `GC_HOOK_EVENT_NAME=SessionStart gc prime --hook --hook-format codex`) ||
+		equalsLegacyCommandBody(body, `GC_HOOK_EVENT_NAME=SessionStart "${GC_BIN:-gc}" prime --hook`) ||
+		equalsLegacyCommandBody(body, `GC_HOOK_EVENT_NAME=SessionStart "${GC_BIN:-gc}" prime --hook --hook-format codex`) ||
 		equalsLegacyCommandBody(body, sessionStartPreviousManagedFormBody) {
 		prefix := strings.TrimSuffix(command, body)
 		return prefix + sessionStartCurrentFormBody, true
@@ -980,11 +987,16 @@ func isLegacyGCManagedCommand(event, command string) bool {
 	switch event {
 	case "PreCompact":
 		return equalsLegacyCommandBody(body, "gc prime --hook") ||
+			equalsLegacyCommandBody(body, `"${GC_BIN:-gc}" prime --hook`) ||
 			equalsLegacyCommandBody(body, `gc handoff "context cycle"`) ||
-			equalsLegacyCommandBody(body, `gc handoff --auto "context cycle"`)
+			equalsLegacyCommandBody(body, `"${GC_BIN:-gc}" handoff "context cycle"`) ||
+			equalsLegacyCommandBody(body, `gc handoff --auto "context cycle"`) ||
+			equalsLegacyCommandBody(body, `"${GC_BIN:-gc}" handoff --auto "context cycle"`)
 	case "SessionStart":
 		return equalsLegacyCommandBody(body, "gc prime --hook") ||
+			equalsLegacyCommandBody(body, `"${GC_BIN:-gc}" prime --hook`) ||
 			equalsLegacyCommandBody(body, "gc prime --hook --hook-format codex") ||
+			equalsLegacyCommandBody(body, `"${GC_BIN:-gc}" prime --hook --hook-format codex`) ||
 			equalsLegacyCommandBody(body, sessionStartPreviousManagedFormBody) ||
 			equalsLegacyCommandBody(body, sessionStartCurrentFormBody)
 	}
@@ -999,9 +1011,11 @@ func isLegacyGCManagedCommand(event, command string) bool {
 // full env-var preamble. If gc ever extends the current-form command
 // with additional arguments, update this constant alongside the
 // emission site so legacy detection remains tight.
-const sessionStartCurrentFormBody = `GC_MANAGED_SESSION_HOOK=1 GC_HOOK_EVENT_NAME=SessionStart gc prime --hook --hook-format codex`
+const sessionStartCurrentFormBody = `GC_MANAGED_SESSION_HOOK=1 GC_HOOK_EVENT_NAME=SessionStart "${GC_BIN:-gc}" prime --hook --hook-format codex`
 
 const sessionStartPreviousManagedFormBody = `GC_MANAGED_SESSION_HOOK=1 GC_HOOK_EVENT_NAME=SessionStart gc prime --hook`
+
+const preCompactCurrentFormBody = `"${GC_BIN:-gc}" handoff --auto "context cycle"`
 
 // equalsLegacyCommandBody reports whether the command body is exactly the
 // legacy token. gc historically emitted these tokens as the complete
@@ -1037,15 +1051,20 @@ func upgradeClaudeHookCommand(event, command string) (string, bool) {
 		// `gc handoff --auto "context cycle"` form. Tested first
 		// because it changes the same trailing token the bare-handoff
 		// form would otherwise patch.
-		if equalsLegacyCommandBody(body, `gc prime --hook`) {
-			return strings.Replace(command, `gc prime --hook`, `gc handoff --auto "context cycle"`, 1), true
+		if equalsLegacyCommandBody(body, `gc prime --hook`) ||
+			equalsLegacyCommandBody(body, `"${GC_BIN:-gc}" prime --hook`) {
+			prefix := strings.TrimSuffix(command, body)
+			return prefix + preCompactCurrentFormBody, true
 		}
 		// Legacy: bare `gc handoff "context cycle"` (no --auto)
 		// requests a controller restart on every Claude Code
 		// compaction event, killing the session (gc-flp1). Upstream
 		// fix landed in commit 7b3b913a; this patches existing cities.
-		if equalsLegacyCommandBody(body, `gc handoff "context cycle"`) {
-			return strings.Replace(command, `gc handoff "context cycle"`, `gc handoff --auto "context cycle"`, 1), true
+		if equalsLegacyCommandBody(body, `gc handoff "context cycle"`) ||
+			equalsLegacyCommandBody(body, `"${GC_BIN:-gc}" handoff "context cycle"`) ||
+			equalsLegacyCommandBody(body, `gc handoff --auto "context cycle"`) {
+			prefix := strings.TrimSuffix(command, body)
+			return prefix + preCompactCurrentFormBody, true
 		}
 	case "SessionStart":
 		// Legacy: bare `gc prime --hook` without the

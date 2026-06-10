@@ -236,6 +236,101 @@ describe("crew empty states", () => {
     expect((document.getElementById("sessions-detail-summary") as HTMLElement).style.display).toBe("none");
   });
 
+  it("pins the mayor session and opens it as the default chat", async () => {
+    window.history.pushState({}, "", "/dashboard?city=default-city");
+    syncCityScopeFromLocation();
+    document.body.innerHTML = `
+      <div id="crew-loading">Loading crew...</div>
+      <table id="crew-table" style="display:none"><tbody id="crew-tbody"></tbody></table>
+      <div id="crew-empty" style="display:none"><p>No crew configured</p></div>
+      <div id="rigged-body"></div>
+      <div id="pooled-body"></div>
+      <span id="sessions-count"></span>
+      <div id="sessions-list"></div>
+      <div id="sessions-detail">
+        <div id="sessions-detail-summary"></div>
+        <div id="agent-log-drawer" style="display:none">
+          <span id="log-drawer-agent-name"></span>
+          <span id="log-drawer-count"></span>
+          <button id="log-drawer-older-btn" style="display:none">Load older</button>
+          <button id="log-drawer-close-btn">Close</button>
+          <div id="log-drawer-body">
+            <div id="log-drawer-messages">
+              <div id="log-drawer-loading">Loading logs...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <span id="crew-count"></span>
+      <span id="rigged-count"></span>
+      <span id="pooled-count"></span>
+    `;
+    vi.spyOn(api, "GET").mockImplementation(async (path: string, options?: unknown) => {
+      if (path === "/v0/city/{cityName}/sessions") {
+        return {
+          data: {
+            items: [
+              {
+                active_bead: "",
+                agent_kind: "role",
+                attached: false,
+                configured_named_session: true,
+                id: "s-dispatcher",
+                last_active: "2026-04-18T20:05:00Z",
+                last_output: "dispatching",
+                running: true,
+                template: "control-dispatcher",
+              },
+              {
+                active_bead: "",
+                agent_kind: "role",
+                attached: false,
+                id: "s-mayor",
+                last_active: "2026-04-18T19:55:00Z",
+                last_output: "checking city",
+                running: true,
+                template: "gastown.mayor",
+              },
+            ],
+          },
+        } as never;
+      }
+      if (path === "/v0/city/{cityName}/session/{id}/pending") {
+        return { data: { pending: false } } as never;
+      }
+      if (path === "/v0/city/{cityName}/session/{id}") {
+        const id = (options as { params?: { path?: { id?: string } } } | undefined)?.params?.path?.id ?? "";
+        return { data: { id, model: "gpt-5", provider: "codex", running: true } } as never;
+      }
+      if (path === "/v0/city/{cityName}/session/{id}/transcript") {
+        const id = (options as { params?: { path?: { id?: string } } } | undefined)?.params?.path?.id ?? "";
+        return {
+          data: {
+            turns: [{ role: "assistant", text: `${id} transcript`, timestamp: "2026-04-18T20:00:00Z" }],
+            pagination: {
+              has_older_messages: false,
+              returned_message_count: 1,
+              total_compactions: 0,
+              total_message_count: 1,
+            },
+          },
+        } as never;
+      }
+      throw new Error(`unexpected GET ${path}`);
+    });
+
+    await renderCrew();
+
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(".session-row"));
+    expect(rows.map((row) => row.dataset.sessionId)).toEqual(["s-mayor", "s-dispatcher"]);
+    await waitFor(() => {
+      expect((document.getElementById("agent-log-drawer") as HTMLElement).style.display).toBe("flex");
+      expect(document.getElementById("log-drawer-agent-name")?.textContent).toBe("gastown.mayor");
+      expect(document.getElementById("log-drawer-messages")?.textContent).toContain("s-mayor transcript");
+    });
+    expect(new URL(window.location.href).searchParams.get("session")).toBe("s-mayor");
+  });
+
   it("opens a session cockpit from the session query parameter", async () => {
     document.body.innerHTML = `
       <div id="crew-loading">Loading crew...</div>

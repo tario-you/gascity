@@ -13,6 +13,7 @@ import {
 
 let selectedWorkspaceSessionID = "";
 let openedSessionDeepLinkID = "";
+let autoOpenedDefaultChatCity = "";
 const pendingStateConcurrency = 8;
 
 configureSessionCockpitHost({
@@ -199,6 +200,9 @@ function renderSessionsWorkspace(
   if (requestedSession && requestedSessionID !== openedSessionDeepLinkID) {
     selectedWorkspaceSessionID = requestedSession.id;
   }
+  if (!selectedWorkspaceSessionID) {
+    selectedWorkspaceSessionID = defaultChatSession(rows)?.id ?? "";
+  }
 
   rows.forEach((session) => {
     const hasPending = pendingBySessionID.get(session.id) ?? false;
@@ -256,6 +260,9 @@ function renderSessionsWorkspace(
   if (requestedSession && requestedSessionID !== openedSessionDeepLinkID) {
     openedSessionDeepLinkID = requestedSessionID;
     void openSessionCockpit(requestedSession.id, sessionTitle(requestedSession));
+  } else if (!requestedSessionID && selected && autoOpenedDefaultChatCity !== cityScope() && !isSessionCockpitOpen()) {
+    autoOpenedDefaultChatCity = cityScope();
+    void openSessionCockpit(selected.id, sessionTitle(selected));
   }
 }
 
@@ -270,6 +277,7 @@ function resetSessionsWorkspace(message: string): void {
   if (!count || !list || !detail) return;
   count.textContent = "0";
   selectedWorkspaceSessionID = "";
+  autoOpenedDefaultChatCity = "";
   setSessionsDetailVisible(false);
   renderSimpleEmpty(list, message);
   renderSimpleEmpty(detail, message);
@@ -331,6 +339,9 @@ function detailField(label: string, value: string): HTMLElement {
 }
 
 function compareSessions(left: SessionRecord, right: SessionRecord): number {
+  const leftPinned = isPinnedChatSession(left);
+  const rightPinned = isPinnedChatSession(right);
+  if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
   const leftRank = sessionRank(left);
   const rightRank = sessionRank(right);
   if (leftRank !== rightRank) return leftRank - rightRank;
@@ -347,6 +358,19 @@ function sessionRank(session: SessionRecord): number {
   if (session.rig) return 3;
   if (session.pool) return 4;
   return 5;
+}
+
+function defaultChatSession(sessions: SessionRecord[]): SessionRecord | undefined {
+  return sessions.find(isPinnedChatSession) ?? sessions[0];
+}
+
+function isPinnedChatSession(session: SessionRecord): boolean {
+  const candidates = [session.template, session.title, session.alias, session.session_name]
+    .filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.some((candidate) => {
+    const role = candidate.toLowerCase().split(/[/.]/).pop() ?? "";
+    return role === "mayor" || role.startsWith("mayor-");
+  });
 }
 
 function sessionTitle(session: SessionRecord): string {

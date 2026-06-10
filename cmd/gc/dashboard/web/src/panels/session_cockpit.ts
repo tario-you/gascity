@@ -339,6 +339,7 @@ async function loadTranscript(sessionID: string, prepend: boolean): Promise<void
       query: { tail: String(prepend ? 50 : 25), before: prepend ? logBeforeCursor : undefined },
     },
   });
+  if (logSessionID !== sessionID) return;
   loadingEl.style.display = "none";
   if (res.error || !res.data) {
     showToast("error", "Transcript failed", res.error?.detail ?? "Could not load transcript");

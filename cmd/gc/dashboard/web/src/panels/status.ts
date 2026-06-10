@@ -14,7 +14,9 @@ type SessionList = DashboardSchema["ListBodySessionResponse"];
 type BeadList = DashboardSchema["ListBodyBead"];
 type SessionSummary = DashboardSchema["SessionResponse"];
 
-const STATUS_REQUEST_TIMEOUT_MS = 1_000;
+// Live city status can briefly block behind provider or bead-store work; a
+// one-second cutoff makes healthy cities look unavailable in the dashboard.
+const STATUS_REQUEST_TIMEOUT_MS = 10_000;
 
 export async function renderStatus(): Promise<void> {
   const city = cityScope();
@@ -247,6 +249,7 @@ function renderCityScopeBanner(city: string, sessions: SessionSummary[]): void {
   if (!banner || !badge || !status) return;
 
   const overseer =
+    sessions.find(isPinnedCitySession) ??
     sessions.find((s) => s.configured_named_session && !s.rig) ??
     sessions.find((s) => !s.rig && !s.pool);
 
@@ -276,6 +279,15 @@ function renderCityScopeBanner(city: string, sessions: SessionSummary[]): void {
     scopeStat("Terminal", overseer.attached ? "Attached" : "Detached"),
     scopeStat("State", overseer.running ? "Running" : "Stopped"),
   );
+}
+
+function isPinnedCitySession(session: SessionSummary): boolean {
+  const candidates = [session.template, session.title, session.alias, session.session_name]
+    .filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.some((candidate) => {
+    const role = candidate.toLowerCase().split(/[/.]/).pop() ?? "";
+    return role === "mayor" || role.startsWith("mayor-");
+  });
 }
 
 function renderCityScopeBannerUnavailable(city: string, reason: string): void {

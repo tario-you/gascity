@@ -12,6 +12,14 @@ set -e
 PACK_DIR="${GC_PACK_DIR:-$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)}"
 . "$PACK_DIR/assets/scripts/runtime.sh"
 
+metadata_registry_complete=false
+
+site_rig_paths() {
+  site="$GC_CITY_PATH/.gc/site.toml"
+  [ -f "$site" ] || return 0
+  sed -n 's/^[[:space:]]*path[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$site" 2>/dev/null || true
+}
+
 metadata_files() {
   printf '%s\n' "$GC_CITY_PATH/.beads/metadata.json"
 
@@ -26,6 +34,7 @@ metadata_files() {
           grep '"path"' | sed 's/.*"path": *"//;s/".*//'
         fi) || true
     if [ -n "$rig_paths" ]; then
+      metadata_registry_complete=true
       printf '%s\n' "$rig_paths" | while IFS= read -r p; do
         [ -n "$p" ] && printf '%s\n' "$p/.beads/metadata.json"
       done
@@ -33,8 +42,22 @@ metadata_files() {
     fi
   fi
 
+  # If `gc rig list` is unavailable or times out, the local site registry still
+  # records external rig paths. Use it before the local rigs/ glob so orphan
+  # classification does not falsely flag active external rig databases.
+  rig_paths=$(site_rig_paths)
+  if [ -n "$rig_paths" ]; then
+    metadata_registry_complete=true
+    printf '%s\n' "$rig_paths" | while IFS= read -r p; do
+      [ -n "$p" ] && printf '%s\n' "$p/.beads/metadata.json"
+    done
+    return
+  fi
+
   # Fallback: scan local rigs/ directory only. Cannot discover external rigs
-  # when gc is unavailable — acceptable degradation.
+  # when gc and the site registry are unavailable. Keep using this for
+  # best-effort database info and zombie filtering, but orphan classification
+  # below fails closed unless metadata_registry_complete=true.
   find "$GC_CITY_PATH/rigs" -path '*/.beads/metadata.json' 2>/dev/null || true
 }
 
@@ -207,7 +230,7 @@ fi
 # Find orphan databases.
 orphan_list=""
 orphan_count=0
-if [ -d "$data_dir" ]; then
+if [ -d "$data_dir" ] && [ "$metadata_registry_complete" = true ]; then
   referenced=""
   while IFS= read -r meta; do
     [ -f "$meta" ] || continue

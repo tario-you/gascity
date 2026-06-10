@@ -780,6 +780,146 @@ func writeExecutable(t *testing.T, path, contents string) {
 	}
 }
 
+func TestHealthScriptOrphanScanUsesSiteRegistryWhenGcFails(t *testing.T) {
+	cityPath := t.TempDir()
+	externalRig := t.TempDir()
+	fakeBin := t.TempDir()
+	dataDir := filepath.Join(cityPath, ".beads", "dolt")
+
+	if err := os.MkdirAll(filepath.Join(cityPath, ".gc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cityPath, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(externalRig, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "wp", ".dolt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "scratchdb", ".dolt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityPath, ".beads", "metadata.json"),
+		[]byte(`{"dolt_database":"hq"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(externalRig, ".beads", "metadata.json"),
+		[]byte(`{"dolt_database":"wp"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityPath, ".gc", "site.toml"),
+		[]byte(fmt.Sprintf("workspace_name = \"test\"\n\n[[rig]]\nname = \"wrapped\"\npath = %q\n", externalRig)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the patrol failure mode: gc is unavailable or times out, so the
+	// health script must rely on .gc/site.toml for external rig paths.
+	writeExecutable(t, filepath.Join(fakeBin, "gc"), "#!/bin/sh\nexit 124\n")
+	writeExecutable(t, filepath.Join(fakeBin, "lsof"), "#!/bin/sh\nexit 1\n")
+	writeExecutable(t, filepath.Join(fakeBin, "nc"), "#!/bin/sh\nexit 1\n")
+	writeExecutable(t, filepath.Join(fakeBin, "dolt"), "#!/bin/sh\nexit 1\n")
+
+	root := repoRoot(t)
+	cmd := exec.Command("sh", filepath.Join(root, healthScript), "--json")
+	cmd.Env = append(
+		filteredEnv("GC_CITY_PATH", "GC_PACK_DIR", "GC_DOLT_HOST", "GC_DOLT_PORT",
+			"GC_DOLT_USER", "GC_DOLT_PASSWORD", "GC_DOLT_DATA_DIR",
+			"GC_HEALTH_SKIP_ZOMBIE_SCAN", "PATH"),
+		"GC_CITY_PATH="+cityPath,
+		"GC_PACK_DIR="+root,
+		"GC_DOLT_HOST=127.0.0.1",
+		"GC_DOLT_PORT=19911",
+		"GC_DOLT_USER=root",
+		"GC_DOLT_PASSWORD=",
+		"GC_DOLT_DATA_DIR="+dataDir,
+		"GC_HEALTH_SKIP_ZOMBIE_SCAN=1",
+		"PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("health.sh failed: %v\n%s", err, out)
+	}
+
+	var report struct {
+		Orphans []struct {
+			Name string `json:"name"`
+		} `json:"orphans"`
+	}
+	if err := json.Unmarshal(out, &report); err != nil {
+		t.Fatalf("health.sh --json returned invalid JSON: %v\n%s", err, out)
+	}
+
+	seen := map[string]bool{}
+	for _, orphan := range report.Orphans {
+		seen[orphan.Name] = true
+	}
+	if seen["wp"] {
+		t.Fatalf("active external rig database wp was reported orphan; orphans=%v\n%s", report.Orphans, out)
+	}
+	if !seen["scratchdb"] {
+		t.Fatalf("unreferenced scratchdb was not reported orphan; orphans=%v\n%s", report.Orphans, out)
+	}
+}
+
+func TestHealthScriptOrphanScanSkipsWhenRegistryIncomplete(t *testing.T) {
+	cityPath := t.TempDir()
+	fakeBin := t.TempDir()
+	dataDir := filepath.Join(cityPath, ".beads", "dolt")
+
+	if err := os.MkdirAll(filepath.Join(cityPath, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "wp", ".dolt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityPath, ".beads", "metadata.json"),
+		[]byte(`{"dolt_database":"hq"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	writeExecutable(t, filepath.Join(fakeBin, "gc"), "#!/bin/sh\nexit 124\n")
+	writeExecutable(t, filepath.Join(fakeBin, "lsof"), "#!/bin/sh\nexit 1\n")
+	writeExecutable(t, filepath.Join(fakeBin, "nc"), "#!/bin/sh\nexit 1\n")
+	writeExecutable(t, filepath.Join(fakeBin, "dolt"), "#!/bin/sh\nexit 1\n")
+
+	root := repoRoot(t)
+	cmd := exec.Command("sh", filepath.Join(root, healthScript), "--json")
+	cmd.Env = append(
+		filteredEnv("GC_CITY_PATH", "GC_PACK_DIR", "GC_DOLT_HOST", "GC_DOLT_PORT",
+			"GC_DOLT_USER", "GC_DOLT_PASSWORD", "GC_DOLT_DATA_DIR",
+			"GC_HEALTH_SKIP_ZOMBIE_SCAN", "PATH"),
+		"GC_CITY_PATH="+cityPath,
+		"GC_PACK_DIR="+root,
+		"GC_DOLT_HOST=127.0.0.1",
+		"GC_DOLT_PORT=19912",
+		"GC_DOLT_USER=root",
+		"GC_DOLT_PASSWORD=",
+		"GC_DOLT_DATA_DIR="+dataDir,
+		"GC_HEALTH_SKIP_ZOMBIE_SCAN=1",
+		"PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("health.sh failed: %v\n%s", err, out)
+	}
+
+	var report struct {
+		Orphans []struct {
+			Name string `json:"name"`
+		} `json:"orphans"`
+	}
+	if err := json.Unmarshal(out, &report); err != nil {
+		t.Fatalf("health.sh --json returned invalid JSON: %v\n%s", err, out)
+	}
+	if len(report.Orphans) != 0 {
+		t.Fatalf("orphan scan should fail closed when registry is incomplete; got %v\n%s", report.Orphans, out)
+	}
+}
+
 // TestHealthScriptZombieScanExcludesRigLocalServers verifies that
 // Dolt processes on rig-configured ports are not flagged as zombies.
 // Regression guard for the bug where deacon patrol killed rig-local

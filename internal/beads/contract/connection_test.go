@@ -422,6 +422,40 @@ func TestResolveDoltConnectionTargetRejectsManagedRuntimeStateWithWrongDataDir(t
 	}
 }
 
+func TestResolveDoltConnectionTargetAcceptsManagedRuntimeDarwinVarAlias(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only /private/var path alias")
+	}
+
+	fs := fsys.OSFS{}
+	city := t.TempDir()
+	var aliasCity string
+	switch {
+	case strings.HasPrefix(city, "/private/var/"):
+		aliasCity = strings.TrimPrefix(city, "/private")
+	case strings.HasPrefix(city, "/var/"):
+		aliasCity = "/private" + city
+	default:
+		t.Skipf("temp dir is not under /var or /private/var: %s", city)
+	}
+
+	writeCanonicalConfig(t, fs, city, ConfigState{
+		IssuePrefix:    "gc",
+		EndpointOrigin: EndpointOriginManagedCity,
+		EndpointStatus: EndpointStatusVerified,
+	})
+	writeCanonicalMetadata(t, fs, city, "hq")
+	port := writeReachableRuntimeStateWithDataDir(t, fs, city, filepath.Join(aliasCity, ".beads", "dolt"))
+
+	target, err := ResolveDoltConnectionTarget(fs, city, city)
+	if err != nil {
+		t.Fatalf("ResolveDoltConnectionTarget() error = %v", err)
+	}
+	if target.Port != port || target.Database != "hq" {
+		t.Fatalf("target = %+v, want port %q database hq", target, port)
+	}
+}
+
 func TestResolveDoltConnectionTargetRejectsManagedRuntimeStateWithDeadPID(t *testing.T) {
 	fs := fsys.OSFS{}
 	city := t.TempDir()

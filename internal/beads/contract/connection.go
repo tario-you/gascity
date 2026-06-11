@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gastownhall/gascity/internal/fsys"
+	"github.com/gastownhall/gascity/internal/pathutil"
 	"github.com/gastownhall/gascity/internal/pidutil"
 )
 
@@ -705,7 +706,7 @@ func validManagedRuntimeState(state managedRuntimeState, cityRoot string) bool {
 		return false
 	}
 	expectedDataDir := filepath.Join(cityRoot, ".beads", "dolt")
-	if filepath.Clean(strings.TrimSpace(state.DataDir)) != filepath.Clean(expectedDataDir) {
+	if !pathutil.SamePath(strings.TrimSpace(state.DataDir), expectedDataDir) {
 		return false
 	}
 	host := managedCityHost()

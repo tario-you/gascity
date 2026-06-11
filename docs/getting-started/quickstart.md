@@ -12,6 +12,20 @@ prerequisites. If you haven't, start with the
 You will need `gc`, `tmux`, `git`, `jq`, and a beads provider (`bd` + `dolt`
 by default, or set `GC_BEADS=file` to skip them).
 
+To verify a local build against a disposable project before touching a real
+repo, run:
+
+```bash
+make smoke-fresh-repo
+```
+
+The smoke uses an isolated `GC_HOME`, creates a temporary git repo, initializes
+a temporary city, adds the repo as a rig, checks status/doctor, verifies
+managed `.gc` and `.beads` files stay ignored by git, then stops and uninstalls
+the isolated supervisor. It defaults to `GC_BEADS=file`; use
+`GC_BEADS=bd GC_SMOKE_CGO_ENABLED=1 make smoke-fresh-repo` when you
+specifically want to exercise the native managed bd/Dolt path.
+
 <Tip>
 Oh My Zsh's `git` plugin defines a `gc` alias for `git commit --verbose`. If
 `gc version` or `gc init` opens git commit instead of Gas City, use

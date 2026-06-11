@@ -165,22 +165,8 @@ func cmdCityStatus(args []string, jsonOutput bool, stdout, stderr io.Writer) int
 		return 1
 	}
 
-	storeStderr := stderr
-	if jsonOutput {
-		storeStderr = io.Discard
-	}
-	store, _, code := openCityStatusStore(cityPath, storeStderr)
-	if code != 0 {
-		if jsonOutput {
-			return writeJSONError(stdout, stderr, "store_open_failed", "gc status: opening bead store failed", code)
-		}
-		return code
-	}
-	statusSnapshot := loadStatusSessionSnapshot(store, stderr)
-	sp := newStatusSessionProviderForCityWithSnapshot(cfg, cityPath, statusSnapshot)
-	dops := newDrainOps(sp)
 	c, reason := cityStatusAPIClient(cityPath)
-	return routeCityStatus(cityPath, cfg, sp, dops, c, reason, jsonOutput, stdout, stderr)
+	return routeCmdCityStatus(cityPath, cfg, c, reason, jsonOutput, stdout, stderr)
 }
 
 // cityStatusAPIClient returns (client, "") when the API path is available,
@@ -192,6 +178,62 @@ var cityStatusAPIClient = func(cityPath string) (*api.Client, string) {
 		return c, ""
 	}
 	return nil, apiClientFallbackReason(cityPath)
+}
+
+func routeCmdCityStatus(
+	cityPath string,
+	cfg *config.City,
+	c *api.Client,
+	nilReason string,
+	jsonOutput bool,
+	stdout, stderr io.Writer,
+) int {
+	const cmdName = "status"
+	if c != nil {
+		sp := newStatusSessionProviderForCity(cfg, cityPath)
+		dops := newDrainOps(sp)
+		cr, err := c.GetStatus()
+		if err == nil {
+			logRoute(stderr, cmdName, "api", "")
+			return renderCityStatusFromAPI(cityPath, cr, dops, jsonOutput, stdout)
+		}
+		if !api.ShouldFallbackForRead(err) {
+			logRoute(stderr, cmdName, "api", "error")
+			fmt.Fprintf(stderr, "gc status: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		nilReason = api.FallbackReason(err)
+	} else if nilReason == "" {
+		nilReason = "controller-down"
+	}
+
+	logRoute(stderr, cmdName, "fallback", nilReason)
+	return doCmdCityStatusFallback(cityPath, cfg, jsonOutput, stdout, stderr)
+}
+
+func doCmdCityStatusFallback(
+	cityPath string,
+	cfg *config.City,
+	jsonOutput bool,
+	stdout, stderr io.Writer,
+) int {
+	storeStderr := stderr
+	if jsonOutput {
+		storeStderr = io.Discard
+	}
+	store, diagnostic, code := openCityStatusStore(cityPath, storeStderr)
+	if code != 0 {
+		if jsonOutput {
+			return writeJSONError(stdout, stderr, "store_open_failed", "gc status: opening bead store failed", code)
+		}
+		return code
+	}
+	statusSnapshot := loadStatusSessionSnapshot(store, stderr)
+	sp := newStatusSessionProviderForCityWithSnapshot(cfg, cityPath, statusSnapshot)
+	if jsonOutput {
+		return doCityStatusJSONWithDiagnosticAndSnapshot(sp, cfg, cityPath, store, diagnostic, statusSnapshot, stdout, stderr)
+	}
+	return doCityStatusWithStoreAndSnapshot(sp, newDrainOps(sp), cfg, cityPath, store, statusSnapshot, stdout, stderr)
 }
 
 // routeCityStatus dispatches `gc status` to the supervisor API when a

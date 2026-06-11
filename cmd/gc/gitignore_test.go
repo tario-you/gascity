@@ -47,7 +47,7 @@ func TestEnsureGitignoreEntries_RigEntriesKeepBeadsRuntimeIgnored(t *testing.T) 
 			t.Errorf("rig .gitignore missing %q; got:\n%s", want, got)
 		}
 	}
-	for _, forbidden := range []string{".gc/", "hooks/", "!.beads/config.yaml", "!.beads/metadata.json"} {
+	for _, forbidden := range []string{"hooks/", "!.beads/config.yaml", "!.beads/metadata.json"} {
 		if strings.Contains(got, forbidden) {
 			t.Errorf("rig .gitignore should not contain %q; got:\n%s", forbidden, got)
 		}
@@ -71,7 +71,11 @@ func TestEnsureGitignoreEntries_BeadsRuntimeFilesSurviveGitClean(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(beadsDir, "dolt"), 0o755); err != nil {
 		t.Fatalf("mkdir .beads/dolt: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(repo, ".gc"), 0o755); err != nil {
+		t.Fatalf("mkdir .gc: %v", err)
+	}
 	for _, rel := range []string{
+		filepath.Join(".gc", "beads.json"),
 		filepath.Join(".beads", "config.yaml"),
 		filepath.Join(".beads", "metadata.json"),
 		filepath.Join(".beads", "dolt", "db"),
@@ -83,6 +87,7 @@ func TestEnsureGitignoreEntries_BeadsRuntimeFilesSurviveGitClean(t *testing.T) {
 
 	out := runGit(t, repo, "clean", "-fdn")
 	for _, forbidden := range []string{
+		filepath.Join(".gc"),
 		filepath.Join(".beads", "config.yaml"),
 		filepath.Join(".beads", "metadata.json"),
 		filepath.Join(".beads", "dolt"),

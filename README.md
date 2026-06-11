@@ -151,6 +151,7 @@ Useful commands:
 - `make setup`
 - `make check`
 - `make check-docs`
+- `make smoke-fresh-repo`
 - `make test-integration`
 
 ## License

@@ -378,6 +378,72 @@ name = "bright-lights"
 	}
 }
 
+func TestCmdCityStatusAPIPathDoesNotOpenLocalStore(t *testing.T) {
+	cityPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cityPath, "city.toml"), []byte(`[workspace]
+name = "bright-lights"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cityPath, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/status") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"name":          "bright-lights",
+			"path":          cityPath,
+			"uptime_sec":    1,
+			"suspended":     false,
+			"agent_count":   0,
+			"rig_count":     0,
+			"running":       0,
+			"agents":        map[string]any{"total": 0, "running": 0},
+			"rigs":          map[string]any{"total": 0},
+			"work":          map[string]any{},
+			"mail":          map[string]any{},
+			"agent_details": []map[string]any{},
+		})
+	}))
+	defer srv.Close()
+
+	oldAPIClient := cityStatusAPIClient
+	cityStatusAPIClient = func(string) (*api.Client, string) {
+		return api.NewCityScopedClient(srv.URL, "bright-lights"), ""
+	}
+	t.Cleanup(func() { cityStatusAPIClient = oldAPIClient })
+
+	oldOpen := openCityStoreAtForStatus
+	storeOpened := false
+	openCityStoreAtForStatus = func(string) (beads.StoreOpenResult, error) {
+		storeOpened = true
+		return beads.StoreOpenResult{}, errors.New("local store should not open on API path")
+	}
+	t.Cleanup(func() { openCityStoreAtForStatus = oldOpen })
+
+	var stdout, stderr bytes.Buffer
+	code := cmdCityStatus([]string{cityPath}, true, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d, want 0; stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if storeOpened {
+		t.Fatal("cmdCityStatus opened the local bead store before using the healthy API response")
+	}
+
+	var status StatusJSON
+	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
+		t.Fatalf("unmarshal: %v; output: %s", err, stdout.String())
+	}
+	if status.CityName != "bright-lights" {
+		t.Fatalf("city_name = %q, want bright-lights", status.CityName)
+	}
+}
+
 func TestSnapshotFromStatusViewIncludesBeadsDiagnostic(t *testing.T) {
 	view := api.StatusView{
 		CityName: "bright-lights",

@@ -9,11 +9,18 @@ import (
 
 var runtimeHelpersLogf = log.Printf
 
+type orderLastRunStore interface {
+	LastOrderRun(string) (time.Time, error)
+}
+
 // LastRunFuncForStore returns the latest order-run bead time for one store.
 func LastRunFuncForStore(store beads.Store) LastRunFunc {
 	return func(name string) (time.Time, error) {
 		if store == nil {
 			return time.Time{}, nil
+		}
+		if fastStore, ok := store.(orderLastRunStore); ok {
+			return fastStore.LastOrderRun(name)
 		}
 		label := "order-run:" + name
 		// Order-run beads land in either tier: the ephemeral tracking bead

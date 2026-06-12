@@ -20,6 +20,25 @@ func (s *rowsErrorStore) List(_ beads.ListQuery) ([]beads.Bead, error) {
 	return s.rows, s.err
 }
 
+type lastOrderRunStore struct {
+	*beads.MemStore
+	last      time.Time
+	lastErr   error
+	listCalls int
+}
+
+func (s *lastOrderRunStore) LastOrderRun(name string) (time.Time, error) {
+	if name != "digest" {
+		return time.Time{}, fmt.Errorf("unexpected order name %q", name)
+	}
+	return s.last, s.lastErr
+}
+
+func (s *lastOrderRunStore) List(query beads.ListQuery) ([]beads.Bead, error) {
+	s.listCalls++
+	return s.MemStore.List(query)
+}
+
 func TestLastRunFuncForStoreReturnsLatestRun(t *testing.T) {
 	store := beads.NewMemStore()
 
@@ -52,6 +71,25 @@ func TestLastRunFuncForStoreReturnsLatestRun(t *testing.T) {
 	}
 	if !second.CreatedAt.After(first.CreatedAt) {
 		t.Fatalf("test setup invalid: second.CreatedAt=%s, first.CreatedAt=%s", second.CreatedAt, first.CreatedAt)
+	}
+}
+
+func TestLastRunFuncForStoreUsesStoreHotPath(t *testing.T) {
+	want := time.Date(2026, 6, 10, 16, 0, 0, 0, time.UTC)
+	store := &lastOrderRunStore{
+		MemStore: beads.NewMemStore(),
+		last:     want,
+	}
+
+	got, err := LastRunFuncForStore(store)("digest")
+	if err != nil {
+		t.Fatalf("LastRunFuncForStore(): %v", err)
+	}
+	if !got.Equal(want) {
+		t.Fatalf("LastRunFuncForStore() = %s, want %s", got, want)
+	}
+	if store.listCalls != 0 {
+		t.Fatalf("List calls = %d, want 0 when LastOrderRun hot path is available", store.listCalls)
 	}
 }
 

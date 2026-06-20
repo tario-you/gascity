@@ -56,6 +56,31 @@ func hookCityBlock(cityPath string) (def, arg string) {
 	return fmt.Sprintf("CITY_PATH=%s\n", shellSingleQuote(cityPath)), ` --city "$CITY_PATH"`
 }
 
+func hookRuntimeEnvBlock() string {
+	var b strings.Builder
+	if gcBin := strings.TrimSpace(resolveProviderLifecycleGCBinary()); gcBin != "" {
+		fmt.Fprintf(&b, "if [ -z \"${GC_BIN:-}\" ]; then\n  GC_BIN=%s\nfi\n", shellSingleQuote(gcBin))
+	} else {
+		b.WriteString("GC_BIN=\"${GC_BIN:-gc}\"\n")
+	}
+	b.WriteString(`case "$GC_BIN" in
+  */*)
+    GC_BIN_DIR=$(dirname "$GC_BIN")
+    case ":${PATH:-}:" in
+      *":$GC_BIN_DIR:"*) ;;
+      *) PATH="$GC_BIN_DIR${PATH:+:$PATH}"; export PATH ;;
+    esac
+    ;;
+esac
+export GC_BIN
+`)
+
+	if gcHome := strings.TrimSpace(os.Getenv("GC_HOME")); gcHome != "" {
+		fmt.Fprintf(&b, "if [ -z \"${GC_HOME:-}\" ]; then\n  GC_HOME=%s\nfi\nexport GC_HOME\n", shellSingleQuote(gcHome))
+	}
+	return b.String()
+}
+
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
@@ -75,7 +100,7 @@ func hookScript(eventType, cityPath string) string {
 %[1]s
 # Installed by gc — forwards bd events to Gas City event log.
 # Args: $1=issue_id  $2=event_type  stdin=issue JSON
-GC_BIN="${GC_BIN:-gc}"
+%[4]s
 HOOK_LOG="${BEADS_DIR:-.beads}/hooks.log"
 %[5]sDATA=$(cat)
 PAYLOAD=$(printf '{"bead":%%s}' "$DATA")
@@ -88,7 +113,7 @@ export GC_BD_TRACE_SCOPE="hook:%[2]s"
     || echo "[$(date -u +%%FT%%TZ)] %[3]s $1: gc event emit %[2]s failed (gc=$GC_BIN)" >>"$HOOK_LOG" 2>/dev/null \
     || true
 ) </dev/null >/dev/null 2>&1 &
-`, hookStampLine(), eventType, hookNameFromEventType(eventType), "", cityDef, cityArg)
+`, hookStampLine(), eventType, hookNameFromEventType(eventType), hookRuntimeEnvBlock(), cityDef, cityArg)
 }
 
 // hookNameFromEventType maps event types back to the hook filename
@@ -123,7 +148,7 @@ func closeHookScript(cityPath string) string {
 # Installed by gc — forwards bd close events, auto-closes completed convoys,
 # and auto-closes orphaned wisps.
 # Args: $1=issue_id  $2=event_type  stdin=issue JSON
-GC_BIN="${GC_BIN:-gc}"
+%[4]s
 HOOK_LOG="${BEADS_DIR:-.beads}/hooks.log"
 %[2]sDATA=$(cat)
 PAYLOAD=$(printf '{"bead":%%s}' "$DATA")
@@ -148,7 +173,7 @@ export GC_BD_TRACE_SCOPE="hook:bead.closed"
     || echo "[$(date -u +%%FT%%TZ)] on_close $1: gc molecule autoclose failed (gc=$GC_BIN)" >>"$HOOK_LOG" 2>/dev/null \
     || true
 ) </dev/null >/dev/null 2>&1 &
-`, hookStampLine(), cityDef, cityArg)
+`, hookStampLine(), cityDef, cityArg, hookRuntimeEnvBlock())
 }
 
 // installBeadHooks writes bd hook scripts into dir/.beads/hooks/ so that
@@ -188,4 +213,31 @@ func installBeadHooks(dir, cityPath string) error {
 		}
 	}
 	return nil
+}
+
+func removeManagedBeadHooks(dir string) error {
+	hooksDir := filepath.Join(dir, ".beads", "hooks")
+	for filename := range beadHooks {
+		path := filepath.Join(hooksDir, filename)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("reading hook %s: %w", filename, err)
+		}
+		if !isManagedBeadHook(content) {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing hook %s: %w", filename, err)
+		}
+	}
+	return nil
+}
+
+func isManagedBeadHook(content []byte) bool {
+	return bytes.Contains(content, []byte("# gc-hook-stamp: ")) ||
+		(bytes.Contains(content, []byte("Installed by gc")) &&
+			bytes.Contains(content, []byte("Gas City")))
 }

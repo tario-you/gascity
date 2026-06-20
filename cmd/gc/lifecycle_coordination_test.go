@@ -120,6 +120,16 @@ func assertHooksExist(t *testing.T, dir, context string) {
 	}
 }
 
+func assertHooksMissing(t *testing.T, dir, context string) {
+	t.Helper()
+	for _, hook := range []string{"on_create", "on_close", "on_update"} {
+		path := filepath.Join(dir, ".beads", "hooks", hook)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("hook %s exists at %s (%s), stat err: %v", hook, dir, context, err)
+		}
+	}
+}
+
 // testCityConfig creates a minimal config.City with the given rigs.
 func testCityConfig(cityName string, rigs []config.Rig) *config.City {
 	return &config.City{
@@ -206,6 +216,37 @@ func TestLifecycleCoordination_InitRigAddStart(t *testing.T) {
 	// Verify hooks reinstalled at both paths after start.
 	assertHooksExist(t, cityPath, "after start")
 	assertHooksExist(t, rigPath, "after start")
+}
+
+func TestStartBeadsLifecycleRemovesManagedHooksWhenEventHooksDisabled(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_DOLT", "skip")
+	configureIsolatedRuntimeEnv(t)
+
+	cityPath := t.TempDir()
+	rigPath := filepath.Join(cityPath, "rigs", "myrig")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{cityPath, rigPath} {
+		if err := installBeadHooks(dir, cityPath); err != nil {
+			t.Fatalf("installBeadHooks(%s): %v", dir, err)
+		}
+		assertHooksExist(t, dir, "before disabled start")
+	}
+
+	disabled := false
+	cfg := testCityConfig("disabled-hooks", []config.Rig{
+		{Name: "myrig", Path: rigPath, Prefix: "mr"},
+	})
+	cfg.Beads.Provider = "file"
+	cfg.Beads.EventHooks = &disabled
+
+	if err := startBeadsLifecycle(cityPath, "disabled-hooks", cfg, io.Discard); err != nil {
+		t.Fatalf("startBeadsLifecycle: %v", err)
+	}
+	assertHooksMissing(t, cityPath, "after disabled start")
+	assertHooksMissing(t, rigPath, "after disabled start")
 }
 
 // TestLifecycleCoordination_StartOrder verifies that start precedes any

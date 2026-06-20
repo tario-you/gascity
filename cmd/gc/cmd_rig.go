@@ -500,13 +500,18 @@ func doRigAddWithResult(fs fsys.FS, cityPath, rigPath string, includes []string,
 		if deferred {
 			if cityUsesBdStoreContract(cityPath) && gcDoltSkip() {
 				w("  Beads init deferred to controller")
-			} else if err := initAndHookDir(cityPath, rigPath, prefix); err != nil {
+			} else if err := initAndHookDirWithEventHooks(cityPath, rigPath, prefix, nextCfg.Beads.EventHooksEnabled()); err != nil {
 				w("  Beads init deferred to controller")
 			} else {
 				w("  Initialized beads database")
 			}
 		} else {
 			w("  Initialized beads database")
+		}
+		if !nextCfg.Beads.EventHooksEnabled() {
+			if err := applyBeadHookPolicy(rigPath, cityPath, false); err != nil {
+				fmt.Fprintf(stderr, "gc rig add: removing bead hooks: %v\n", err) //nolint:errcheck // best-effort stderr
+			}
 		}
 	}
 
@@ -536,8 +541,8 @@ func doRigAddWithResult(fs fsys.FS, cityPath, rigPath string, includes []string,
 	w("  Generated routes.jsonl for cross-rig routing")
 
 	if adopt {
-		if err := installBeadHooks(rigPath, cityPath); err != nil {
-			fmt.Fprintf(stderr, "gc rig add: installing bead hooks: %v\n", err) //nolint:errcheck // best-effort stderr
+		if err := applyBeadHookPolicy(rigPath, cityPath, nextCfg.Beads.EventHooksEnabled()); err != nil {
+			fmt.Fprintf(stderr, "gc rig add: applying bead hook policy: %v\n", err) //nolint:errcheck // best-effort stderr
 		}
 	}
 	if err := ensureGitignoreEntries(fs, rigPath, rigGitignoreEntries); err != nil {

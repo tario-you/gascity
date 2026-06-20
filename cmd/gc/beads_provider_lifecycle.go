@@ -207,7 +207,8 @@ func startBeadsLifecycle(cityPath, _ string, cfg *config.City, stderr io.Writer)
 	// identity that differs from the bead prefix. New managed bd stores still
 	// default to prefix-named databases, but older/imported metadata may carry
 	// a different dolt_database that gc-beads-bd should preserve.
-	if err := initAndHookDir(cityPath, cityPath, beadsPrefix); err != nil {
+	eventHooksEnabled := cfg.Beads.EventHooksEnabled()
+	if err := initAndHookDirWithEventHooks(cityPath, cityPath, beadsPrefix, eventHooksEnabled); err != nil {
 		return fmt.Errorf("init city beads: %w", err)
 	}
 	for i := range cfg.Rigs {
@@ -215,7 +216,7 @@ func startBeadsLifecycle(cityPath, _ string, cfg *config.City, stderr io.Writer)
 			continue
 		}
 		prefix := cfg.Rigs[i].EffectivePrefix()
-		if err := initAndHookDir(cityPath, cfg.Rigs[i].Path, prefix); err != nil {
+		if err := initAndHookDirWithEventHooks(cityPath, cfg.Rigs[i].Path, prefix, eventHooksEnabled); err != nil {
 			return fmt.Errorf("init rig %q beads: %w", cfg.Rigs[i].Name, err)
 		}
 	}
@@ -496,13 +497,14 @@ func normalizeCanonicalBdScopeFilesForInit(cityPath, dir, prefix, doltDatabase s
 // init the directory, then install event hooks. The ordering matters
 // because init (bd init) may recreate .beads/ and wipe existing hooks.
 func initAndHookDir(cityPath, dir, prefix string) error {
+	return initAndHookDirWithEventHooks(cityPath, dir, prefix, true)
+}
+
+func initAndHookDirWithEventHooks(cityPath, dir, prefix string, eventHooksEnabled bool) error {
 	if usesPostgres, err := scopeUsesPostgresBackendForInit(cityPath, dir); err != nil {
 		return err
 	} else if usesPostgres {
-		if err := installBeadHooks(dir, cityPath); err != nil {
-			return fmt.Errorf("install hooks at %s: %w", dir, err)
-		}
-		return nil
+		return applyBeadHookPolicy(dir, cityPath, eventHooksEnabled)
 	}
 	doltDatabase := canonicalScopeDoltDatabase(cityPath, dir, prefix)
 	if err := normalizeCanonicalBdScopeFilesForInit(cityPath, dir, prefix, doltDatabase); err != nil {
@@ -536,8 +538,18 @@ func initAndHookDir(cityPath, dir, prefix string) error {
 		}
 	}
 	// Non-fatal: hooks are convenience (event forwarding), not critical.
-	if err := installBeadHooks(dir, cityPath); err != nil {
-		return fmt.Errorf("install hooks at %s: %w", dir, err)
+	return applyBeadHookPolicy(dir, cityPath, eventHooksEnabled)
+}
+
+func applyBeadHookPolicy(dir, cityPath string, eventHooksEnabled bool) error {
+	if eventHooksEnabled {
+		if err := installBeadHooks(dir, cityPath); err != nil {
+			return fmt.Errorf("install hooks at %s: %w", dir, err)
+		}
+		return nil
+	}
+	if err := removeManagedBeadHooks(dir); err != nil {
+		return fmt.Errorf("remove hooks at %s: %w", dir, err)
 	}
 	return nil
 }

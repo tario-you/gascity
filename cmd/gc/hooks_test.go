@@ -81,6 +81,26 @@ func TestHookScriptEmbedsCityPath(t *testing.T) {
 	}
 }
 
+func TestHookScriptPinsRuntimeEnv(t *testing.T) {
+	oldResolve := resolveProviderLifecycleGCBinary
+	resolveProviderLifecycleGCBinary = func() string { return "/opt/gc/bin/gc" }
+	t.Cleanup(func() { resolveProviderLifecycleGCBinary = oldResolve })
+	t.Setenv("GC_HOME", "/tmp/gc-home")
+
+	content := hookScript("bead.updated", "/some/city")
+	for _, want := range []string{
+		"GC_BIN='/opt/gc/bin/gc'",
+		"export GC_BIN",
+		"GC_HOME='/tmp/gc-home'",
+		"export GC_HOME",
+		`PATH="$GC_BIN_DIR${PATH:+:$PATH}"`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("hook script missing %q:\n%s", want, content)
+		}
+	}
+}
+
 // TestHookScriptOmitsCityFlagWhenEmpty verifies that an empty cityPath
 // produces a hook script without the --city flag — preserving the
 // original "walk up from cwd" behavior for callers that have not yet
@@ -438,6 +458,36 @@ func TestInstallBeadHooksDoesNotRewriteUnchangedHooks(t *testing.T) {
 	}
 	if !info.ModTime().Equal(past) {
 		t.Fatalf("unchanged hook was rewritten: modtime = %s, want %s", info.ModTime(), past)
+	}
+}
+
+func TestRemoveManagedBeadHooksPreservesCustomHooks(t *testing.T) {
+	dir := t.TempDir()
+	if err := installBeadHooks(dir, ""); err != nil {
+		t.Fatalf("installBeadHooks: %v", err)
+	}
+
+	customPath := filepath.Join(dir, ".beads", "hooks", "on_update")
+	customContent := []byte("#!/bin/sh\nprintf custom-hook\n")
+	if err := os.WriteFile(customPath, customContent, 0o755); err != nil {
+		t.Fatalf("write custom hook: %v", err)
+	}
+
+	if err := removeManagedBeadHooks(dir); err != nil {
+		t.Fatalf("removeManagedBeadHooks: %v", err)
+	}
+
+	for _, name := range []string{"on_create", "on_close"} {
+		if _, err := os.Stat(filepath.Join(dir, ".beads", "hooks", name)); !os.IsNotExist(err) {
+			t.Fatalf("%s still exists or stat failed with non-missing error: %v", name, err)
+		}
+	}
+	got, err := os.ReadFile(customPath)
+	if err != nil {
+		t.Fatalf("custom hook removed: %v", err)
+	}
+	if string(got) != string(customContent) {
+		t.Fatalf("custom hook content changed: %q", got)
 	}
 }
 
